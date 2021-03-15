@@ -1,0 +1,245 @@
+name: CI                                                                       #
+on:                                                                            #
+  push:                                                                        #
+    branches:                                                                  #
+    - docker                                                                   #
+  pull_request:                                                                #
+    branches:                                                                  #
+    - docker                                                                   #
+jobs:                                                                          #
+  docker:                                                                      #
+    runs-on: ubuntu-18.04                                                      #
+    steps:                                                                     #
+    - name: checkout                                                           #
+      uses: actions/checkout@v2                                                #
+    - name: test                                                               #
+      run: |                                                                   #
+        set -x                                                                 ;
+                                                                               #
+        branch=$(basename $GITHUB_REF)                                         ;
+        project=$(basename $GITHUB_REPOSITORY)                                 ;
+                                                                               #
+        echo $branch | grep ^v[0-9]                                            \
+          && release=$( echo $branch | awk -F^v '{ print $2 }' )               \
+          || release=latest                                                    ;
+                                                                               #
+        for app in hasher rng webui worker                                     ;
+          do                                                                   \
+            docker build -t $GITHUB_REPOSITORY:$release-testing-$app $app/     ;
+          done                                                                 ;
+                                                                               #
+        for app in hasher redis rng                                            ;
+          do                                                                   \
+            docker network create $app                                         ;
+          done                                                                 ;
+                                                                               #
+        docker run --network redis --name redis -v redis:/data -d              \
+          redis:6.0.9-alpine3.12@sha256:aa31e6d2afc72d2222ed3953587197c324f615861771637a64053f9d99ba4b74 ;
+                                                                               #
+        for app in hasher rng                                                  ;
+          do                                                                   \
+            docker run --network $app --name $app -d                           \
+              $GITHUB_REPOSITORY:$release-testing-$app                         ;
+          done                                                                 ;
+                                                                               #
+        for app in webui worker                                                ;
+          do                                                                   \
+            docker run --network redis --name $app -d                          \
+              $GITHUB_REPOSITORY:$release-testing-$app                         ;
+          done                                                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec hasher ps | grep ruby && break                         ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec hasher netstat -tln | grep 8080 && break               ;
+          done                                                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec rng ps | grep python && break                          ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec rng netstat -tln | grep 8080 && break                  ;
+          done                                                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec webui ps | grep node && break                          ;
+          done                                                                 ;
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker ps | grep node.*8080.*webui && break                        ;
+          done                                                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            docker exec worker ps | grep python && break                       ;
+          done                                                                 ;
+                                                                               #
+  swarm:                                                                       #
+    env:                                                                       #
+      mode: swarm                                                              #
+    runs-on: ubuntu-18.04                                                      #
+    steps:                                                                     #
+    -                                                                          #
+      name: checkout                                                           #
+      uses: actions/checkout@v2                                                #
+    -                                                                          #
+      name: test                                                               #
+      run: |                                                                   #
+        set -x                                                                 ;
+                                                                               #
+        branch=$(basename $GITHUB_REF)                                         ;
+        project=$(basename $GITHUB_REPOSITORY)                                 ;
+                                                                               #
+        echo $branch | grep ^v[0-9]                                            \
+          && release=$( echo $branch | awk -F^v '{ print $2 }' )               \
+          || release=latest                                                    ;
+                                                                               #
+        compose=etc/$mode/manifests/$project.yaml                              ;
+        sed -i /image:.*$project/s/$release/$release-testing/ $compose         ;
+                                                                               #
+        for app in hasher rng webui worker                                     ;
+          do                                                                   \
+            docker build -t $GITHUB_REPOSITORY:$release-testing-$app $app/     ;
+          done                                                                 ;
+                                                                               #
+        docker swarm init                                                      ;
+        sed -i /node.role/s/worker/manager/ $compose                           ;
+        docker stack deploy -c $compose $project                               ;
+                                                                               #
+        for app in hasher redis webui worker                                   ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                docker service ls                                              \
+                |                                                              \
+                grep "$app.*replicated.*\([0-9]\)/\1" && break                 ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+        for app in rng                                                         ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                docker service ls | grep "$app.*global.*\([0-9]\)/\1" && break ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+  kubernetes:                                                                  #
+    env:                                                                       #
+      mode: kubernetes                                                         #
+    runs-on: ubuntu-18.04                                                      #
+    steps:                                                                     #
+    -                                                                          #
+      name: checkout                                                           #
+      uses: actions/checkout@v2                                                #
+    -                                                                          #
+      name: test                                                               #
+      run: |                                                                   #
+        set -x                                                                 ;
+                                                                               #
+        branch=$(basename $GITHUB_REF)                                         ;
+        project=$(basename $GITHUB_REPOSITORY)                                 ;
+                                                                               #
+        echo $branch | grep ^v[0-9]                                            \
+          && release=$( echo $branch | awk -F^v '{ print $2 }' )               \
+          || release=latest                                                    ;
+                                                                               #
+        compose=etc/$mode/manifests/$project.yaml                              ;
+        sed -i /image:.*$project/s/$release/$release-testing/ $compose         ;
+                                                                               #
+        for app in hasher rng webui worker                                     ;
+          do                                                                   \
+            docker build -t $GITHUB_REPOSITORY:$release-testing-$app $app/     ;
+          done                                                                 ;
+                                                                               #
+        uuid=$( md5sum $compose | cut -d\  -f1 )                               ;
+        git clone --single-branch -b v1.2                                      \
+          https://github.com/academiaonline/kubernetes $uuid                   ;
+        path=$uuid/bin/cluster/ubuntu18/install-docker-kubelet.sh              ;
+        source $path                                                           ;
+        path=$uuid/bin/cluster/ubuntu18/install-leader.sh                      ;
+        source $path                                                           ;
+        master=$( kubectl get node | grep master | awk '{ print $1 }' )        ;
+        kubectl taint node $master node-role.kubernetes.io/master:NoSchedule-  ;
+        rm -rf $uuid                                                           ;
+                                                                               #
+        sed -i /imagePullPolicy/s/Always/Never/ $compose                       ;
+        kubectl apply -f $compose                                              ;
+                                                                               #
+        for app in hasher redis webui worker                                   ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                kubectl get deploy | grep "$app.*\([0-9]\)/\1" && break        ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+        for app in rng                                                         ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                kubectl get ds | grep "$app.*1.*1.*1.*1.*1" && break           ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+        for app in hasher rng                                                  ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                kubectl get svc | grep "$app.*ClusterIP.*8080/TCP" && break    ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+        for app in redis                                                       ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                kubectl get svc | grep "$app.*ClusterIP.*6379/TCP" && break    ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+        for app in webui                                                       ;
+          do                                                                   \
+            while true                                                         ;
+              do                                                               \
+                sleep 10                                                       ;
+                kubectl get svc                                                \
+                |                                                              \
+                grep "$app.*ClusterIP.*8080/TCP" && break                      ;
+              done                                                             ;
+          done                                                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            kubectl logs deploy/webui                                          \
+            |                                                                  \
+            grep "WEBUI running on port 8080" && break                         ;
+          done                                                                 ;
+                                                                               #
+        while true                                                             ;
+          do                                                                   \
+            sleep 10                                                           ;
+            kubectl exec deploy/webui -- curl localhost:8080/index.html        \
+            |                                                                  \
+            grep "DockerCoin Miner WebUI" && break                             ;
+          done                                                                 ;
