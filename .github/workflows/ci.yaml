@@ -1,53 +1,53 @@
-name: CI                                                                       #
-on:                                                                            #
-  push:                                                                        #
-    branches:                                                                  #
-    - docker                                                                   #
-  pull_request:                                                                #
-    branches:                                                                  #
-    - docker                                                                   #
-jobs:                                                                          #
-  docker:                                                                      #
-    runs-on: ubuntu-18.04                                                      #
-    steps:                                                                     #
-    - name: checkout                                                           #
-      uses: actions/checkout@v2                                                #
-    - name: test                                                               #
-      run: |                                                                   #
-        set -x                                                                 ;
-                                                                               #
-        branch=$(basename $GITHUB_REF)                                         ;
-        project=$(basename $GITHUB_REPOSITORY)                                 ;
-                                                                               #
-        echo $branch | grep ^v[0-9]                                            \
-          && release=$( echo $branch | awk -F^v '{ print $2 }' )               \
-          || release=latest                                                    ;
-                                                                               #
-        for app in hasher rng webui worker                                     ;
-          do                                                                   \
-            docker build -t $GITHUB_REPOSITORY:$release-testing-$app $app/     ;
-          done                                                                 ;
-                                                                               #
-        for app in hasher redis rng                                            ;
-          do                                                                   \
-            docker network create $app                                         ;
-          done                                                                 ;
-                                                                               #
-        docker run --network redis --name redis -v redis:/data -d              \
+name: CI
+on:
+  push:
+    branches:
+    - docker
+  pull_request:
+    branches:
+    - docker
+jobs:
+  docker:
+    runs-on: ubuntu-18.04
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+    - name: test
+      run: |
+        set -x ;
+
+        branch=$(basename $GITHUB_REF) ;
+        project=$(basename $GITHUB_REPOSITORY) ;
+
+        echo $branch | grep ^v[0-9] \
+          && release=$( echo $branch | awk -F^v '{ print $2 }' ) \
+          || release=latest ;
+
+        for app in hasher rng webui worker ;
+          do \
+            docker build -t $GITHUB_REPOSITORY:$release-testing-$app $app/ ;
+          done ;
+
+        for app in hasher redis rng ;
+          do \
+            docker network create $app ;
+          done ;
+
+        docker run --network redis --name redis -v redis:/data -d \
           redis:6.0.9-alpine3.12@sha256:aa31e6d2afc72d2222ed3953587197c324f615861771637a64053f9d99ba4b74 ;
-                                                                               #
-        for app in hasher rng                                                  ;
-          do                                                                   \
-            docker run --network $app --name $app -d                           \
-              $GITHUB_REPOSITORY:$release-testing-$app                         ;
-          done                                                                 ;
-                                                                               #
-        for app in webui worker                                                ;
-          do                                                                   \
-            docker run --network redis --name $app -d                          \
-              $GITHUB_REPOSITORY:$release-testing-$app                         ;
-          done                                                                 ;
-                                                                               #
+
+        for app in hasher rng ;
+          do \
+            docker run --network $app --name $app -d \
+              $GITHUB_REPOSITORY:$release-testing-$app ;
+          done ;
+
+        for app in webui worker ;
+          do \
+            docker run --network redis --name $app -d \
+              $GITHUB_REPOSITORY:$release-testing-$app ;
+          done ;
+
         while true                                                             ;
           do                                                                   \
             sleep 10                                                           ;
